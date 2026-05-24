@@ -191,7 +191,7 @@ export default function Home() {
     const data = records.map(r => ({
       time: `${formatDate(r.time)} ${formatTime(r.time)}`,
       password: getDialDisplayText(r.dial),
-      result: isCorrectDial(r.dial) ? '성공' : '실패',
+      result: isCorrectDial(r.dial) ? "success" : "fail",
     }));
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL
