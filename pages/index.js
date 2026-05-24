@@ -56,7 +56,7 @@ function createPlaceholderImage() {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#f0f0f0'; ctx.fillRect(0, 0, 900, 560);
   ctx.fillStyle = '#999'; ctx.font = '700 48px Arial';
-  ctx.textAlign = 'center'; ctx.fillText('이미지 없음', 450, 280);
+  ctx.textAlign = 'center'; ctx.fillText('No Image', 450, 280);
   return canvas.toDataURL('image/jpeg', 0.9);
 }
 
@@ -77,12 +77,12 @@ function createCameraImage(label, mainColor, bgColor) {
 function createSampleRecords() {
   const make = (date, dial, photo) => ({
     id: createId(), time: date.toISOString(), dial,
-    location: '현관 도어락', photo, isCorrect: isCorrectDial(dial)
+    location: 'door lock', photo, isCorrect: isCorrectDial(dial)
   });
   return [
-    make(new Date(2026,4,1,8,42,0),  '1234', createCameraImage('샘플 데이터','#0f766e','#d9f2ee')),
-    make(new Date(2026,4,2,19,12,0), '1200', createCameraImage('샘플 데이터','#a74f16','#fff2e6')),
-    make(new Date(2026,4,3,7,55,0),  '1234', createCameraImage('샘플 데이터','#4c6f9f','#eef3ff')),
+    make(new Date(2026,4,1,8,42,0),  '1234', createCameraImage('sample','#0f766e','#d9f2ee')),
+    make(new Date(2026,4,2,19,12,0), '1200', createCameraImage('sample','#a74f16','#fff2e6')),
+    make(new Date(2026,4,3,7,55,0),  '1234', createCameraImage('sample','#4c6f9f','#eef3ff')),
   ];
 }
 
@@ -107,7 +107,7 @@ export default function Home() {
         id:       item.id || createId(),
         time:     item.timestamp ? parseTimestamp(item.timestamp).toISOString() : new Date().toISOString(),
         dial:     item.input || '',
-        location: '현관 도어락',
+        location: 'door lock',
         photo:    item.imageFile || createPlaceholderImage(),
         isCorrect: item.result === 'SUCCESS',
       }));
@@ -139,7 +139,7 @@ export default function Home() {
       setIsLocked(locked);
       return true;
     } catch {
-      alert('입력 잠금 상태 변경에 실패했습니다.');
+      alert('Failed to update lock status.');
       return false;
     }
   };
@@ -189,9 +189,284 @@ export default function Home() {
 
   const downloadJson = () => {
     const data = records.map(r => ({
-      time: `${formatDate(r.time)} ${formatTime(r.time)}`,
+      time: formatDate(r.time) + ' ' + formatTime(r.time),
       password: getDialDisplayText(r.dial),
       result: isCorrectDial(r.dial) ? "success" : "fail",
     }));
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'doorlock-records-' + getLocalDateKey(new Date()) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const renderCalendar = () => {
+    const year        = calendarMonth.getFullYear();
+    const month       = calendarMonth.getMonth();
+    const firstDay    = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+
+    for (let i = 0; i < firstDay; i++) {
+      cells.push(<button key={"e" + i} className="calendar-day is-empty" disabled />);
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date    = new Date(year, month, day);
+      const dateKey = getLocalDateKey(date);
+      const dayRecs = records.filter(r => getLocalDateKey(new Date(r.time)) === dateKey);
+      const isToday    = date.toDateString() === new Date().toDateString();
+      const isSelected = dateKey === selectedDateKey;
+
+      const classes = ['calendar-day',
+        isToday    ? 'is-today'    : '',
+        isSelected ? 'is-selected' : '',
+        dayRecs.length > 0 ? 'has-records' : '',
+      ].filter(Boolean).join(' ');
+
+      cells.push(
+        <button
+          key={dateKey}
+          className={classes}
+          onClick={() => {
+            setSelectedDateKey(dateKey);
+            setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+          }}
+        >
+          <span className="day-number">{day}</span>
+          {dayRecs.length > 0 && <span className="day-badge">{dayRecs.length}</span>}
+        </button>
+      );
+    }
+    return cells;
+  };
+
+  const scrollToDetail = () => {
+    document.querySelector('.detail-panel') &&
+    document.querySelector('.detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div>
+      <Head>
+        <title>Smart Door Lock Monitor</title>
+        <link rel="stylesheet" href="/style.css" />
+      </Head>
+
+      <header className="topbar">
+        <div className="brand-group">
+          <img className="brand-logo" src="/498268_302696_304.png" alt="logo" />
+          <div className="brand-copy">
+            <p className="eyebrow">Smart Door Lock Monitor</p>
+            <h1>Door Lock Records</h1>
+          </div>
+        </div>
+        <div className="device-status-list">
+          {[
+            { key: 'camera',  label: 'Camera' },
+            { key: 'time',    label: 'Time Device' },
+            { key: 'display', label: 'Display Device' },
+          ].map(function(item) {
+            return (
+              <div key={item.key} className={"device-status" + (deviceStatus[item.key] ? '' : ' is-disconnected')}>
+                <span className="status-dot" />
+                <span>{item.label} {deviceStatus[item.key] ? 'Connected' : 'Disconnected'}</span>
+              </div>
+            );
+          })}
+        </div>
+      </header>
+
+      <main className="dashboard">
+
+        <section className="calendar-panel">
+          <article className="calendar-card">
+            <div className="calendar-header">
+              <button className="icon-button" type="button"
+                onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>
+                {'<'}
+              </button>
+              <h2>{calendarMonth.getFullYear()} / {calendarMonth.getMonth() + 1}</h2>
+              <button className="icon-button" type="button"
+                onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>
+                {'>'}
+              </button>
+            </div>
+            <div className="calendar-weekdays">
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function(d) { return <span key={d}>{d}</span>; })}
+            </div>
+            <div className="calendar-grid">{renderCalendar()}</div>
+          </article>
+
+          <article className="daily-card">
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">Selected Date</p>
+                <h2>{formatDate(selectedDateKey)}</h2>
+              </div>
+              <span>{dayRecords.length} records</span>
+            </div>
+            <div className="daily-list">
+              {dayRecords.length === 0
+                ? <p className="empty-message">No records for this date</p>
+                : dayRecords.map(function(record) {
+                    return (
+                      <button
+                        key={record.id}
+                        className={"daily-record " + (isCorrectDial(record.dial) ? 'is-correct' : 'is-wrong')}
+                        onClick={() => { setSelectedId(record.id); scrollToDetail(); }}
+                      >
+                        <span className="daily-time">{formatTime(record.time)}</span>
+                        <span className="daily-dial">{getDialDisplayText(record.dial)}</span>
+                      </button>
+                    );
+                  })
+              }
+            </div>
+          </article>
+        </section>
+
+        <section className="control-panel">
+          <button className="primary-button" type="button" onClick={downloadJson}>Export JSON</button>
+        </section>
+
+        <section className="content-grid">
+          <aside className="log-panel">
+            <div className="section-title">
+              <div className="log-filter" ref={filterRef}>
+                <button
+                  className="log-filter-toggle" type="button"
+                  aria-expanded={String(filterMenuOpen)}
+                  onClick={() => setFilterMenuOpen(function(o) { return !o; })}
+                >
+                  <span>
+                    {recordFilter === 'recent'  ? 'Recent 7 days' :
+                     recordFilter === 'wrong'   ? 'Wrong input' : 'Correct input'}
+                  </span>
+                </button>
+                {filterMenuOpen && (
+                  <div className="log-filter-menu" role="listbox">
+                    {[
+                      { key: 'recent',  label: 'Recent 7 days' },
+                      { key: 'wrong',   label: 'Wrong input' },
+                      { key: 'correct', label: 'Correct input' },
+                    ].map(function(item) {
+                      return (
+                        <button
+                          key={item.key}
+                          className={"log-filter-option" + (recordFilter === item.key ? ' is-selected' : '')}
+                          type="button"
+                          onClick={() => { setRecordFilter(item.key); setFilterMenuOpen(false); }}
+                        >{item.label}</button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <span>{filteredRecords.length} shown</span>
+            </div>
+
+            <div className="log-list">
+              {filteredRecords.length === 0
+                ? <p className="empty-message">No records</p>
+                : filteredRecords.map(function(record) {
+                    return (
+                      <button
+                        key={record.id}
+                        className={['log-card',
+                          record.id === effectiveSelectedId ? 'is-active' : '',
+                          isCorrectDial(record.dial) ? '' : 'is-wrong',
+                        ].filter(Boolean).join(' ')}
+                        type="button"
+                        onClick={() => { setSelectedId(record.id); scrollToDetail(); }}
+                      >
+                        <img src={record.photo} alt="door lock camera" />
+                        <span className="log-meta">
+                          <span className="log-time">{formatTime(record.time)}</span>
+                          <span className="log-dial">{getDialDisplayText(record.dial)}</span>
+                        </span>
+                      </button>
+                    );
+                  })
+              }
+            </div>
+          </aside>
+
+          <section className="detail-panel">
+            <div className="detail-photo-wrap">
+              <img
+                src={selectedRecord ? selectedRecord.photo : createPlaceholderImage()}
+                alt="door lock camera photo"
+              />
+            </div>
+            <div className="detail-info">
+              <p className="eyebrow">Selected Record</p>
+              <h2>
+                {selectedRecord
+                  ? (isCorrectDial(selectedRecord.dial) ? 'Correct Input' : 'Wrong Input')
+                  : 'Select a record'}
+              </h2>
+              <dl>
+                <div>
+                  <dt>Time</dt>
+                  <dd>{selectedRecord ? formatDate(selectedRecord.time) + ' ' + formatTime(selectedRecord.time) : '-'}</dd>
+                </div>
+                <div>
+                  <dt>Input</dt>
+                  <dd>{selectedRecord ? getDialDisplayText(selectedRecord.dial) : '-'}</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
+        </section>
+
+        <section className="lock-panel">
+          <div className="section-title">
+            <h2>Display Input Lock</h2>
+            <span>{isLocked ? 'Locked' : 'Unlocked'}</span>
+          </div>
+          <div className="lock-control">
+            <div>
+              <p className="lock-title">Touch Input Control</p>
+              <p className="lock-description">Block touch input on the display during remote demo.</p>
+            </div>
+            <button
+              className={"lock-switch" + (isLocked ? ' is-on' : '')}
+              type="button" role="switch"
+              onClick={() => { if (isLocked) sendLockStatus(false); else setShowLockModal(true); }}
+            >
+              <span className="switch-track"><span className="switch-thumb" /></span>
+              <span className="switch-label">{isLocked ? 'ON' : 'OFF'}</span>
+            </button>
+          </div>
+          <p className="lock-note">
+            {isLocked
+              ? 'Touch input is currently blocked.'
+              : 'Touch input is currently allowed.'}
+          </p>
+        </section>
+
+        {showLockModal && (
+          <div
+            className="modal-backdrop"
+            onClick={function(e) { if (e.target === e.currentTarget) setShowLockModal(false); }}
+          >
+            <section className="warning-modal" role="dialog">
+              <p className="eyebrow">Remote Control</p>
+              <h2>Lock display input?</h2>
+              <p>Touch input on the door lock display will be blocked while locked.</p>
+              <div className="modal-actions">
+                <button className="ghost-button" type="button" onClick={() => setShowLockModal(false)}>Cancel</button>
+                <button className="danger-button" type="button"
+                  onClick={function() { sendLockStatus(true); setShowLockModal(false); }}>Lock</button>
+              </div>
+            </section>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+}
