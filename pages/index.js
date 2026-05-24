@@ -111,8 +111,16 @@ export default function Home() {
         photo:    item.imageFile || createPlaceholderImage(),
         isCorrect: item.result === 'SUCCESS',
       }));
-      setRecords(loaded.length > 0 ? loaded : createSampleRecords());
-      setDeviceStatus({ camera: true, time: true, display: true });
+
+      // ★ 실제 데이터가 있을 때만 연결됨으로 표시
+      if (loaded.length > 0) {
+        setRecords(loaded);
+        setDeviceStatus({ camera: true, time: true, display: true });
+      } else {
+        setRecords(createSampleRecords());
+        setDeviceStatus({ camera: false, time: false, display: false });
+      }
+
     } catch {
       setDeviceStatus({ camera: false, time: false, display: false });
       setRecords(prev => prev.length > 0 ? prev : createSampleRecords());
