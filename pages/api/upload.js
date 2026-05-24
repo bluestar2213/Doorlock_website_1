@@ -6,8 +6,6 @@ cloudinary.config({
   api_secret:  process.env.CLOUDINARY_API_SECRET,
 });
 
-export const config = { api: { bodyParser: false } };
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -16,38 +14,31 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    // 요청 바디 수집
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const buffer = Buffer.concat(chunks);
+    const { timestamp, filename, image } = req.body;
 
-    // multipart에서 timestamp 파싱
-    const bodyStr = buffer.toString('binary');
-    const tsMatch = bodyStr.match(/name="timestamp"\r\n\r\n([^\r\n]+)/);
-    const timestamp = tsMatch ? tsMatch[1].trim() : Date.now().toString();
+    if (!image) return res.status(400).json({ error: 'No image data' });
+
     const publicId = 'doorlock/CAPTURE_' + timestamp;
 
-    // JPEG 데이터 추출
-    const jpegStart = buffer.indexOf(Buffer.from([0xFF, 0xD8]));
-    const jpegEnd   = buffer.lastIndexOf(Buffer.from([0xFF, 0xD9]));
-
-    if (jpegStart === -1 || jpegEnd === -1) {
-      return res.status(400).json({ error: 'No valid JPEG found' });
-    }
-
-    const jpegBuffer = buffer.slice(jpegStart, jpegEnd + 2);
+    // base64 데이터 URI로 변환
+    const dataUri = 'data:image/jpeg;base64,' + image;
 
     // Cloudinary 업로드
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { public_id: publicId, resource_type: 'image', overwrite: true },
-        (error, result) => { if (error) reject(error); else resolve(result); }
-      );
-      stream.end(jpegBuffer);
+    const result = await cloudinary.uploader.upload(dataUri, {
+      public_id:     publicId,
+      resource_type: 'image',
+      overwrite:     true,
     });
 
     console.log('[UPLOAD] Cloudinary URL:', result.secure_url);
-    return res.status(200).json({ ok: true, url: result.secure_url, publicId });
+
+    // event.js의 해당 이벤트에 imageUrl 업데이트
+    return res.status(200).json({
+      ok:       true,
+      url:      result.secure_url,
+      publicId: publicId,
+      filename: filename,
+    });
 
   } catch (err) {
     console.error('[UPLOAD] Error:', err);
