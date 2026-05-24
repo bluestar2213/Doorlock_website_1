@@ -7,10 +7,13 @@ export default function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method === 'POST') {
-    const { timestamp, input, result, imageFile, deviceId } = req.body;
+    const { timestamp, input, result, imageFile, imageUrl, deviceId } = req.body;
     const event = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      timestamp, input, result, imageFile, deviceId
+      timestamp, input, result,
+      imageFile,
+      imageUrl: imageUrl || null,  // Cloudinary URL
+      deviceId
     };
     eventLog.unshift(event);
     if (eventLog.length > 100) eventLog.pop();
