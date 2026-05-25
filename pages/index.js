@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import Head from 'next/head';
 
 const CORRECT_PASSWORD = "1234";
-const REFRESH_INTERVAL = 2000; // 2초마다 갱신 (기존 5초 → 단축)
+const REFRESH_INTERVAL = 2000;
 
 function createId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -48,7 +48,6 @@ function parseTimestamp(timestamp) {
 
 function isCorrectDial(dial) { return dial === CORRECT_PASSWORD; }
 
-// ★ 올바른 입력은 비밀번호 숨기고 "올바른 입력"으로 표시
 function getDialDisplayText(dial) {
   if (isCorrectDial(dial)) return '올바른 입력';
   return String(dial).split('').join(' ');
@@ -100,11 +99,11 @@ export default function Home() {
   const [calendarMonth, setCalendarMonth]     = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [filterMenuOpen, setFilterMenuOpen]   = useState(false);
   const [showLockModal, setShowLockModal]     = useState(false);
-  const [deviceOnline, setDeviceOnline]       = useState(false); // ★ 단일 연결 상태
+  const [deviceOnline, setDeviceOnline]       = useState(false);
   const [lastSeen, setLastSeen]               = useState(null);
   const filterRef = useRef(null);
 
-  // ★ 기록 누락 방지: 서버 전체 목록과 로컬 목록 머지
+  // ★ 서버+로컬 머지: 서버가 적은 데이터를 보내도 기존 데이터 유지
   const mergeRecords = useCallback((serverEvents) => {
     const loaded = serverEvents.map(item => ({
       id:       item.id || createId(),
@@ -114,10 +113,19 @@ export default function Home() {
       photo:    item.imageUrl || createPlaceholderImage(),
       isCorrect: item.result === 'SUCCESS',
     }));
+
     setRecords(prev => {
       if (loaded.length === 0) return prev.length > 0 ? prev : createSampleRecords();
-      // 서버 데이터가 있으면 서버 기준으로 전체 교체 (누락 방지)
-      return loaded;
+
+      // 서버 데이터와 로컬 데이터를 id 기준으로 머지
+      // 서버에 없는 로컬 데이터도 유지
+      const serverIds = new Set(loaded.map(r => r.id));
+      const localOnly = prev.filter(r => !serverIds.has(r.id));
+      const merged = [...loaded, ...localOnly];
+
+      // 시간순 정렬 후 최대 200개 유지
+      merged.sort((a, b) => new Date(b.time) - new Date(a.time));
+      return merged.slice(0, 200);
     });
   }, []);
 
@@ -127,7 +135,6 @@ export default function Home() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       mergeRecords(data.events || []);
-      // ★ 데이터가 있으면 연결됨으로 표시
       if ((data.events || []).length > 0) {
         setDeviceOnline(true);
       }
@@ -288,7 +295,6 @@ export default function Home() {
         <link rel="stylesheet" href="https://fonts.googleapis.com/earlyaccess/jejugothic.css" />
       </Head>
 
-      {/* 상단바 */}
       <header className="topbar">
         <div className="brand-group">
           <img className="brand-logo" src="/498268_302696_304.png" alt="로고" />
@@ -314,7 +320,6 @@ export default function Home() {
 
       <main className="dashboard">
 
-        {/* 달력 + 일별 기록 */}
         <section className="calendar-panel">
           <article className="calendar-card">
             <div className="calendar-header">
@@ -322,7 +327,6 @@ export default function Home() {
                 onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>
                 {'‹'}
               </button>
-              {/* ★ 2026년 5월 형식 */}
               <h2>{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</h2>
               <button className="icon-button" type="button"
                 onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>
@@ -363,12 +367,10 @@ export default function Home() {
           </article>
         </section>
 
-        {/* 내보내기 */}
         <section className="control-panel">
           <button className="primary-button" type="button" onClick={downloadJson}>JSON 내보내기</button>
         </section>
 
-        {/* 기록 목록 + 상세 */}
         <section className="content-grid">
           <aside className="log-panel">
             <div className="section-title">
@@ -431,7 +433,6 @@ export default function Home() {
             </div>
           </aside>
 
-          {/* 상세 */}
           <section className="detail-panel">
             <div className="detail-photo-wrap">
               <img
@@ -460,7 +461,6 @@ export default function Home() {
           </section>
         </section>
 
-        {/* 잠금 패널 */}
         <section className="lock-panel">
           <div className="section-title">
             <h2>디스플레이 입력 잠금</h2>
@@ -487,7 +487,6 @@ export default function Home() {
           </p>
         </section>
 
-        {/* 잠금 모달 */}
         {showLockModal && (
           <div
             className="modal-backdrop"
