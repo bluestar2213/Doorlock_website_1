@@ -1093,3 +1093,15 @@ dd {
     height: 140px;
   }
 }
+/* 제주고딕 폰트 전체 적용 */
+body {
+  font-family: "Jeju Gothic", "제주고딕", Arial, sans-serif;
+}
+
+/* 마지막 연결 시간 표시 */
+.last-seen {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 4px;
+  text-align: right;
+}

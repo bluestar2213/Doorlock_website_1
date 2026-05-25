@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import Head from 'next/head';
 
 const CORRECT_PASSWORD = "1234";
-const REFRESH_INTERVAL = 5000;
+const REFRESH_INTERVAL = 2000; // 2초마다 갱신 (기존 5초 → 단축)
 
 function createId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -47,7 +47,12 @@ function parseTimestamp(timestamp) {
 }
 
 function isCorrectDial(dial) { return dial === CORRECT_PASSWORD; }
-function getDialDisplayText(dial) { return String(dial).split('').join(' '); }
+
+// ★ 올바른 입력은 비밀번호 숨기고 "올바른 입력"으로 표시
+function getDialDisplayText(dial) {
+  if (isCorrectDial(dial)) return '올바른 입력';
+  return String(dial).split('').join(' ');
+}
 
 function createPlaceholderImage() {
   if (typeof document === 'undefined') return '';
@@ -56,7 +61,7 @@ function createPlaceholderImage() {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#f0f0f0'; ctx.fillRect(0, 0, 900, 560);
   ctx.fillStyle = '#999'; ctx.font = '700 48px Arial';
-  ctx.textAlign = 'center'; ctx.fillText('No Image', 450, 280);
+  ctx.textAlign = 'center'; ctx.fillText('이미지 없음', 450, 280);
   return canvas.toDataURL('image/jpeg', 0.9);
 }
 
@@ -77,12 +82,12 @@ function createCameraImage(label, mainColor, bgColor) {
 function createSampleRecords() {
   const make = (date, dial, photo) => ({
     id: createId(), time: date.toISOString(), dial,
-    location: 'door lock', photo, isCorrect: isCorrectDial(dial)
+    location: '현관 도어락', photo, isCorrect: isCorrectDial(dial)
   });
   return [
-    make(new Date(2026,4,1,8,42,0),  '1234', createCameraImage('sample','#0f766e','#d9f2ee')),
-    make(new Date(2026,4,2,19,12,0), '1200', createCameraImage('sample','#a74f16','#fff2e6')),
-    make(new Date(2026,4,3,7,55,0),  '1234', createCameraImage('sample','#4c6f9f','#eef3ff')),
+    make(new Date(2026,4,1,8,42,0),  '1234', createCameraImage('샘플','#0f766e','#d9f2ee')),
+    make(new Date(2026,4,2,19,12,0), '1200', createCameraImage('샘플','#a74f16','#fff2e6')),
+    make(new Date(2026,4,3,7,55,0),  '1234', createCameraImage('샘플','#4c6f9f','#eef3ff')),
   ];
 }
 
@@ -95,36 +100,50 @@ export default function Home() {
   const [calendarMonth, setCalendarMonth]     = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [filterMenuOpen, setFilterMenuOpen]   = useState(false);
   const [showLockModal, setShowLockModal]     = useState(false);
-  const [deviceStatus, setDeviceStatus]       = useState({ camera: false, time: false, display: false });
+  const [deviceOnline, setDeviceOnline]       = useState(false); // ★ 단일 연결 상태
+  const [lastSeen, setLastSeen]               = useState(null);
   const filterRef = useRef(null);
+
+  // ★ 기록 누락 방지: 서버 전체 목록과 로컬 목록 머지
+  const mergeRecords = useCallback((serverEvents) => {
+    const loaded = serverEvents.map(item => ({
+      id:       item.id || createId(),
+      time:     item.timestamp ? parseTimestamp(item.timestamp).toISOString() : new Date().toISOString(),
+      dial:     item.input || '',
+      location: '현관 도어락',
+      photo:    item.imageUrl || createPlaceholderImage(),
+      isCorrect: item.result === 'SUCCESS',
+    }));
+    setRecords(prev => {
+      if (loaded.length === 0) return prev.length > 0 ? prev : createSampleRecords();
+      // 서버 데이터가 있으면 서버 기준으로 전체 교체 (누락 방지)
+      return loaded;
+    });
+  }, []);
 
   const loadRecords = useCallback(async () => {
     try {
       const res = await fetch('/api/event');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const loaded = (data.events || []).map(item => ({
-        id:       item.id || createId(),
-        time:     item.timestamp ? parseTimestamp(item.timestamp).toISOString() : new Date().toISOString(),
-        dial:     item.input || '',
-        location: 'door lock',
-        photo:    item.imageUrl || createPlaceholderImage(),
-        isCorrect: item.result === 'SUCCESS',
-      }));
-
-      // ★ 실제 데이터가 있을 때만 연결됨으로 표시
-      if (loaded.length > 0) {
-        setRecords(loaded);
-        setDeviceStatus({ camera: true, time: true, display: true });
-      } else {
-        setRecords(createSampleRecords());
-        setDeviceStatus({ camera: false, time: false, display: false });
+      mergeRecords(data.events || []);
+      // ★ 데이터가 있으면 연결됨으로 표시
+      if ((data.events || []).length > 0) {
+        setDeviceOnline(true);
       }
-
     } catch {
-      setDeviceStatus({ camera: false, time: false, display: false });
-      setRecords(prev => prev.length > 0 ? prev : createSampleRecords());
+      // 오류 시 기존 데이터 유지
     }
+  }, [mergeRecords]);
+
+  const loadHeartbeat = useCallback(async () => {
+    try {
+      const res = await fetch('/api/heartbeat?deviceId=ESP32-DOORLOCK-01');
+      if (!res.ok) return;
+      const data = await res.json();
+      setDeviceOnline(data.status === 'online');
+      setLastSeen(data.lastSeen);
+    } catch {}
   }, []);
 
   const loadLockStatus = useCallback(async () => {
@@ -147,17 +166,22 @@ export default function Home() {
       setIsLocked(locked);
       return true;
     } catch {
-      alert('Failed to update lock status.');
+      alert('잠금 상태 변경에 실패했습니다.');
       return false;
     }
   };
 
   useEffect(() => {
     loadRecords();
+    loadHeartbeat();
     loadLockStatus();
-    const id = setInterval(() => { loadRecords(); loadLockStatus(); }, REFRESH_INTERVAL);
+    const id = setInterval(() => {
+      loadRecords();
+      loadHeartbeat();
+      loadLockStatus();
+    }, REFRESH_INTERVAL);
     return () => clearInterval(id);
-  }, [loadRecords, loadLockStatus]);
+  }, [loadRecords, loadHeartbeat, loadLockStatus]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -197,9 +221,9 @@ export default function Home() {
 
   const downloadJson = () => {
     const data = records.map(r => ({
-      time: formatDate(r.time) + ' ' + formatTime(r.time),
-      password: getDialDisplayText(r.dial),
-      result: isCorrectDial(r.dial) ? "success" : "fail",
+      시간: formatDate(r.time) + ' ' + formatTime(r.time),
+      입력: isCorrectDial(r.dial) ? '올바른 입력' : r.dial.split('').join(' '),
+      결과: isCorrectDial(r.dial) ? '성공' : '실패',
     }));
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -259,51 +283,54 @@ export default function Home() {
   return (
     <div>
       <Head>
-        <title>Smart Door Lock Monitor</title>
+        <title>스마트 도어락 기록 확인</title>
         <link rel="stylesheet" href="/style.css" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/earlyaccess/jejugothic.css" />
       </Head>
 
+      {/* 상단바 */}
       <header className="topbar">
         <div className="brand-group">
-          <img className="brand-logo" src="/498268_302696_304.png" alt="logo" />
+          <img className="brand-logo" src="/498268_302696_304.png" alt="로고" />
           <div className="brand-copy">
             <p className="eyebrow">Smart Door Lock Monitor</p>
-            <h1>Door Lock Records</h1>
+            <h1>도어락 기록 확인</h1>
           </div>
         </div>
+
+        {/* ★ 단일 장치 연결 상태 */}
         <div className="device-status-list">
-          {[
-            { key: 'camera',  label: 'Camera' },
-            { key: 'time',    label: 'Time Device' },
-            { key: 'display', label: 'Display Device' },
-          ].map(function(item) {
-            return (
-              <div key={item.key} className={"device-status" + (deviceStatus[item.key] ? '' : ' is-disconnected')}>
-                <span className="status-dot" />
-                <span>{item.label} {deviceStatus[item.key] ? 'Connected' : 'Disconnected'}</span>
-              </div>
-            );
-          })}
+          <div className={`device-status${deviceOnline ? '' : ' is-disconnected'}`}>
+            <span className="status-dot" />
+            <span>도어락 {deviceOnline ? '연결됨' : '연결 끊김'}</span>
+          </div>
+          {lastSeen && (
+            <div className="last-seen">
+              마지막 연결: {new Date(lastSeen).toLocaleString('ko-KR')}
+            </div>
+          )}
         </div>
       </header>
 
       <main className="dashboard">
 
+        {/* 달력 + 일별 기록 */}
         <section className="calendar-panel">
           <article className="calendar-card">
             <div className="calendar-header">
               <button className="icon-button" type="button"
                 onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>
-                {'<'}
+                {'‹'}
               </button>
-              <h2>{calendarMonth.getFullYear()} / {calendarMonth.getMonth() + 1}</h2>
+              {/* ★ 2026년 5월 형식 */}
+              <h2>{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</h2>
               <button className="icon-button" type="button"
                 onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>
-                {'>'}
+                {'›'}
               </button>
             </div>
             <div className="calendar-weekdays">
-              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function(d) { return <span key={d}>{d}</span>; })}
+              {['일','월','화','수','목','금','토'].map(function(d) { return <span key={d}>{d}</span>; })}
             </div>
             <div className="calendar-grid">{renderCalendar()}</div>
           </article>
@@ -312,13 +339,13 @@ export default function Home() {
             <div className="section-title">
               <div>
                 <p className="eyebrow">Selected Date</p>
-                <h2>{formatDate(selectedDateKey)}</h2>
+                <h2>{formatDate(selectedDateKey)} 입력 기록</h2>
               </div>
-              <span>{dayRecords.length} records</span>
+              <span>{dayRecords.length}개</span>
             </div>
             <div className="daily-list">
               {dayRecords.length === 0
-                ? <p className="empty-message">No records for this date</p>
+                ? <p className="empty-message">이 날짜에는 기록이 없습니다</p>
                 : dayRecords.map(function(record) {
                     return (
                       <button
@@ -336,10 +363,12 @@ export default function Home() {
           </article>
         </section>
 
+        {/* 내보내기 */}
         <section className="control-panel">
-          <button className="primary-button" type="button" onClick={downloadJson}>Export JSON</button>
+          <button className="primary-button" type="button" onClick={downloadJson}>JSON 내보내기</button>
         </section>
 
+        {/* 기록 목록 + 상세 */}
         <section className="content-grid">
           <aside className="log-panel">
             <div className="section-title">
@@ -350,16 +379,16 @@ export default function Home() {
                   onClick={() => setFilterMenuOpen(function(o) { return !o; })}
                 >
                   <span>
-                    {recordFilter === 'recent'  ? 'Recent 7 days' :
-                     recordFilter === 'wrong'   ? 'Wrong input' : 'Correct input'}
+                    {recordFilter === 'recent'  ? '최근 7일 기록' :
+                     recordFilter === 'wrong'   ? '틀린 입력 기록' : '올바른 입력 기록'}
                   </span>
                 </button>
                 {filterMenuOpen && (
                   <div className="log-filter-menu" role="listbox">
                     {[
-                      { key: 'recent',  label: 'Recent 7 days' },
-                      { key: 'wrong',   label: 'Wrong input' },
-                      { key: 'correct', label: 'Correct input' },
+                      { key: 'recent',  label: '최근 7일 기록' },
+                      { key: 'wrong',   label: '틀린 입력 기록' },
+                      { key: 'correct', label: '올바른 입력 기록' },
                     ].map(function(item) {
                       return (
                         <button
@@ -373,12 +402,12 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <span>{filteredRecords.length} shown</span>
+              <span>{filteredRecords.length}개 표시</span>
             </div>
 
             <div className="log-list">
               {filteredRecords.length === 0
-                ? <p className="empty-message">No records</p>
+                ? <p className="empty-message">표시할 기록이 없습니다</p>
                 : filteredRecords.map(function(record) {
                     return (
                       <button
@@ -390,7 +419,7 @@ export default function Home() {
                         type="button"
                         onClick={() => { setSelectedId(record.id); scrollToDetail(); }}
                       >
-                        <img src={record.photo} alt="door lock camera" />
+                        <img src={record.photo} alt="도어락 카메라 사진" />
                         <span className="log-meta">
                           <span className="log-time">{formatTime(record.time)}</span>
                           <span className="log-dial">{getDialDisplayText(record.dial)}</span>
@@ -402,27 +431,28 @@ export default function Home() {
             </div>
           </aside>
 
+          {/* 상세 */}
           <section className="detail-panel">
             <div className="detail-photo-wrap">
               <img
                 src={selectedRecord ? selectedRecord.photo : createPlaceholderImage()}
-                alt="door lock camera photo"
+                alt="도어락 카메라 사진"
               />
             </div>
             <div className="detail-info">
               <p className="eyebrow">Selected Record</p>
               <h2>
                 {selectedRecord
-                  ? (isCorrectDial(selectedRecord.dial) ? 'Correct Input' : 'Wrong Input')
-                  : 'Select a record'}
+                  ? (isCorrectDial(selectedRecord.dial) ? '✅ 올바른 입력' : '❌ 잘못된 입력')
+                  : '기록을 선택하세요'}
               </h2>
               <dl>
                 <div>
-                  <dt>Time</dt>
+                  <dt>촬영 시간</dt>
                   <dd>{selectedRecord ? formatDate(selectedRecord.time) + ' ' + formatTime(selectedRecord.time) : '-'}</dd>
                 </div>
                 <div>
-                  <dt>Input</dt>
+                  <dt>입력 번호</dt>
                   <dd>{selectedRecord ? getDialDisplayText(selectedRecord.dial) : '-'}</dd>
                 </div>
               </dl>
@@ -430,15 +460,16 @@ export default function Home() {
           </section>
         </section>
 
+        {/* 잠금 패널 */}
         <section className="lock-panel">
           <div className="section-title">
-            <h2>Display Input Lock</h2>
-            <span>{isLocked ? 'Locked' : 'Unlocked'}</span>
+            <h2>디스플레이 입력 잠금</h2>
+            <span>{isLocked ? '입력 잠금 중' : '입력 허용 중'}</span>
           </div>
           <div className="lock-control">
             <div>
-              <p className="lock-title">Touch Input Control</p>
-              <p className="lock-description">Block touch input on the display during remote demo.</p>
+              <p className="lock-title">터치 입력 제어</p>
+              <p className="lock-description">원격 시연 시 디스플레이의 터치 입력을 차단하는 상태로 전환합니다.</p>
             </div>
             <button
               className={"lock-switch" + (isLocked ? ' is-on' : '')}
@@ -451,11 +482,12 @@ export default function Home() {
           </div>
           <p className="lock-note">
             {isLocked
-              ? 'Touch input is currently blocked.'
-              : 'Touch input is currently allowed.'}
+              ? '현재 도어락 디스플레이 터치 입력이 차단된 상태입니다.'
+              : '현재 도어락 디스플레이 입력을 받을 수 있습니다.'}
           </p>
         </section>
 
+        {/* 잠금 모달 */}
         {showLockModal && (
           <div
             className="modal-backdrop"
@@ -463,12 +495,12 @@ export default function Home() {
           >
             <section className="warning-modal" role="dialog">
               <p className="eyebrow">Remote Control</p>
-              <h2>Lock display input?</h2>
-              <p>Touch input on the door lock display will be blocked while locked.</p>
+              <h2>디스플레이 입력을 잠글까요?</h2>
+              <p>잠금 중에는 도어락 디스플레이의 터치 입력이 차단됩니다. 시연 장치 상태를 확인한 뒤 실행하세요.</p>
               <div className="modal-actions">
-                <button className="ghost-button" type="button" onClick={() => setShowLockModal(false)}>Cancel</button>
+                <button className="ghost-button" type="button" onClick={() => setShowLockModal(false)}>취소</button>
                 <button className="danger-button" type="button"
-                  onClick={function() { sendLockStatus(true); setShowLockModal(false); }}>Lock</button>
+                  onClick={function() { sendLockStatus(true); setShowLockModal(false); }}>입력 잠금</button>
               </div>
             </section>
           </div>
