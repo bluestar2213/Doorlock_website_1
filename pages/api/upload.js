@@ -6,6 +6,10 @@ cloudinary.config({
   api_secret:  process.env.CLOUDINARY_API_SECRET,
 });
 
+// event.js의 eventLog를 공유하기 위한 전역 저장소
+// ★ Vercel 서버리스 특성상 같은 인스턴스일 때만 공유됨
+// 안정적 방법: event.js에서 imageUrl 업데이트 엔드포인트 추가
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -15,15 +19,11 @@ export default async function handler(req, res) {
 
   try {
     const { timestamp, filename, image } = req.body;
-
     if (!image) return res.status(400).json({ error: 'No image data' });
 
     const publicId = 'doorlock/CAPTURE_' + timestamp;
+    const dataUri  = 'data:image/jpeg;base64,' + image;
 
-    // base64 데이터 URI로 변환
-    const dataUri = 'data:image/jpeg;base64,' + image;
-
-    // Cloudinary 업로드
     const result = await cloudinary.uploader.upload(dataUri, {
       public_id:     publicId,
       resource_type: 'image',
@@ -32,7 +32,6 @@ export default async function handler(req, res) {
 
     console.log('[UPLOAD] Cloudinary URL:', result.secure_url);
 
-    // event.js의 해당 이벤트에 imageUrl 업데이트
     return res.status(200).json({
       ok:       true,
       url:      result.secure_url,

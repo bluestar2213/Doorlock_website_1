@@ -108,7 +108,7 @@ export default function Home() {
         time:     item.timestamp ? parseTimestamp(item.timestamp).toISOString() : new Date().toISOString(),
         dial:     item.input || '',
         location: 'door lock',
-        photo:    item.imageFile || createPlaceholderImage(),
+        photo:    item.imageUrl || createPlaceholderImage(),
         isCorrect: item.result === 'SUCCESS',
       }));
 
